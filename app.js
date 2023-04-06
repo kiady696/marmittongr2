@@ -18,32 +18,111 @@ const con = mysql.createConnection({
   host:'localhost',
   port:3306,
   user:'root',
-  password : '', 
+  password : '',  
   database : 'marmittongr2'
 });
+
+// importation des fonctions utilitaires
+var utils = require('./utils');
+
+/**
+ * Génére et calcule les quantités nécessaires d'ingrédients à acheter 
+ * En fonction des recettes et du nombre de personnes qui mangeront pour un jour
+ * Et ce pendant une semaine
+ *  ||||||||| Endpoint principal de l'application |||||||||||
+ **/ 
+app.post('/api/marmiton/', (req, res) =>{
+
+    var jsonObject = req.body;
+    var uneCommande = {};
+    var tabCommandes = [];
+    // res.json(jsonObject);
+    /**
+     * Ce qu'il y aura dans le req.body :
+     * UN TABLEAU DE : 
+     * [ La recette (id_recette ou même un objet entier),  
+     * Le n° du jour de la semaine (0 -> 6), 
+     * Le nombre de personnes qui vont manger la recette ]
+     **/ 
+    jsonObject.forEach(commandeJour => {
+
+        // recueil des ingrédients, leur quantité, unité et prix
+        con.query('SELECT i.nom_ingredient, ri.quantite, i.prix, i.unite FROM ingredients as i JOIN recettes_ingredients AS ri ON ri.id_ingredient=i.id_ingredient WHERE ri.id_recette=?', [commandeJour.id_recette], (err, sql_results1) =>{
+            if(err) throw err;
+            uneCommande = sql_results1;
+            uneCommande['nbPersonnes'] = commandeJour.nb_personnes_qui_va_le_manger;
+            // push dans le tableau des commandes
+            tabCommandes.push(uneCommande); 
+            if (tabCommandes.length === jsonObject.length) res.json(tabCommandes); // se rempli que quand la requete 
+
+            
+        });
+    });
+
+    // Parcourir sur chaque tableau d'ingrédients
+    //tabCommandes.forEach( ingredients =>{
+
+    });
+
+
+
+
+    // la taille du tableau ne pourra pas excéder 7 (pour les 7 jours de la semaine)
+    // On va calculer : Si recettes_ingredients.quantité pour la recette est de 100g 
+    // Et que la recette est faite pour 1 personne, 
+    // Alors il faudrait 200g de cet ingrédient si deux personnes veut manger ce jour là.
+    // => qte_finale_necessaire_d_un_ingredient = 
+    // (nb_personnes_qui_vont_manger * recettes_ingredients.quantite) / nb_personnes_prevu_par_la_recette
+
+});
+
 
 // Liste toutes les recettes avec leurs ingrédients
 app.get('/api/recettes/', (req, res) =>{
     // creation nouveau tableau 
     var recettesSimples = [];
     var recettesEnrichies = [];
+    
     // receuil de toutes les recettes
-    con.query('SELECT * FROM recettes', (err, sql_results1) =>{
-        if(err) throw err;
-        recettesSimples = sql_results1; // les recettes 'simples' (sans ingrédients)
+    new Promise((resolve, reject) => {
+        con.query('SELECT * FROM recettes', (err, sql_results1) =>{
+            if(err) reject(err);
+            recettesSimples = sql_results1; // les recettes 'simples' (sans ingrédients)
+            resolve();
+        }); 
+    }).then(() => {
         // pour chaque recette, récupérer ses ingrédients
-        recettesSimples.forEach(recette => {
-            con.query('SELECT * FROM ingredients LEFT JOIN recettes_ingredients ON recettes_ingredients.id_ingredient = ingredients.id_ingredient WHERE recettes_ingredients.id_recette = ?', 
-            [recette.id_recette], 
-            (err, sql_result2) =>{
-                if(err) throw err;  
-                recette['ingredients'] = sql_result2; // ajoute les ingrédient en tant qu'attribut de la recette
-                recettesEnrichies.push(recette); // ajoute au nouveau tableau de 'recettes enrichies'
-                if(recettesEnrichies.length == recettesSimples.length) res.json(recettesEnrichies); // les recettes avec leurs ingrédients
+        var promises = recettesSimples.map((recette) => {
+            return new Promise((resolve, reject) => {
+                con.query('SELECT * FROM ingredients LEFT JOIN recettes_ingredients ON recettes_ingredients.id_ingredient = ingredients.id_ingredient WHERE recettes_ingredients.id_recette = ?', [recette.id_recette], (err, sql_result2) => {
+                    if(err) reject(err);  
+                    recette['ingredients'] = sql_result2; // ajoute les ingrédient en tant qu'attribut de la recette
+                    recettesEnrichies.push(recette); // ajoute au nouveau tableau de 'recettes enrichies'
+                    resolve();
+                });
             });
         });
-    });
 
+        // pour chaque recette, récupérer l'étape
+        var promises = recettesSimples.map((recette) => {
+            return new Promise((resolve, reject) => {
+                con.query('SELECT * FROM etapes WHERE etapes.id_recette = ?', [recette.id_recette], (err, sql_result3) => {
+                    if(err) reject(err);  
+                    recette['etapes'] = sql_result3; // ajoute les ingrédient en tant qu'attribut de la recette
+                    recettesEnrichies.push(recette); // ajoute au nouveau tableau de 'recettes enrichies'
+                    resolve();
+                });
+            });
+        });
+
+        Promise.all(promises).then(() => {
+            res.json(recettesEnrichies);
+        }).catch((err) => {
+            throw err;
+        });
+    }).catch((err) => {
+        throw err;
+    });
 });
 
 // Crée un ingrédient et l'ajoute à une recette en même temps 
